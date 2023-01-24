@@ -5,9 +5,8 @@ Factorise a number using the Elliptic Curve Method (ECM)
  
  In tests with moderately sized factors up to 20 digits this algorithm outperforms pyecm, although I haven't experimented with tuning the parameters of pyecm.
 
-The algorithms test primality of a number using Miller-Rabin and factorise a number using trial division, Pollard Rho, and Elliptic Curve Method (ECM). Factorisation may take some time if the number has two large prime factors.
+The function factorECM tests primality of a number using Miller-Rabin and factorises a number using trial division and Elliptic Curve Method (ECM). Factorisation may take some time if the number has two large prime factors.
 
-ECM algorithm
 
 The ECM algorithm uses Montgomery elliptic curves with Suyama parameterisation to construct the curves, and has 2 phases based on the descriptions in [1] and [2]
 
@@ -25,3 +24,10 @@ References
 [2] R.Brent, Factorization Of The Tenth Fermat Number, 1999, Mathematics of Computation, Vol. 68, p. 429-451 https://www.ams.org/journals/mcom/1999-68-225/S0025-5718-99-00992-8/S0025-5718-99-00992-8.pdf
 
 [3] README file for GMP-ECM https://github.com/sethtroisi/gmp-ecm/blob/master/README
+
+Typical use:
+
+    from ecmAV import factorECM
+
+    f = factorECM(n) # returns a list of prime factors of n
+
