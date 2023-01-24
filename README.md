@@ -6,6 +6,7 @@ Factorise a number using the Elliptic Curve Method (ECM)
  In tests with moderately sized factors up to 20 digits this algorithm outperforms pyecm, although I haven't experimented with tuning the parameters of pyecm.
 
 The algorithms test primality of a number using Miller-Rabin and factorise a number using trial division, Pollard Rho, and Elliptic Curve Method (ECM). Factorisation may take some time if the number has two large prime factors.
+
 ECM algorithm
 
 The ECM algorithm uses Montgomery elliptic curves with Suyama parameterisation to construct the curves, and has 2 phases based on the descriptions in [1] and [2]
