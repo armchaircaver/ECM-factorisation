@@ -31,3 +31,4 @@ Typical use:
 
     f = factorECM(n) # returns a list of prime factors of n
 
+A website hosting an interactive Javascript implemetation of the algorithm can be found at https://factorisation.netlify.app/
