@@ -5,9 +5,15 @@
 
 from time import time, perf_counter
 from random import randint, randrange
-from math import gcd, exp
+from math import exp
 from array import array
 import bisect
+try:
+  from gmpy2 import mpz, invert, gcd
+except:
+  from math import gcd
+  def invert(a,n): return pow(a,-1,n)
+  def mpz(x): return x
 
 def millerTest(a,d,n,r):
     # test de Miller pour un témoin a
@@ -135,15 +141,17 @@ def setVerbose( x ):
     global verbose
     verbose=x
 
+timing = False # boolean to switch timing messages
+def setTiming( x ):
+    global timing
+    timing=x
 
 def montgomery(n, B1, B2, primes, count=0):
 
-    timing = False # boolean to switch timing messages
+    n = mpz(n)
     
     # construct a curve and initial point
     # suyama curve from https://members.loria.fr/PZimmermann/papers/ecm.pdf
-
-    
     start=perf_counter()
     if count==1:
         sigma=11
@@ -158,23 +166,24 @@ def montgomery(n, B1, B2, primes, count=0):
       a = (  ((v-u)**3 * (3*u+v)) * pow(4*u*u*u*v,-1,n) - 2 ) %n
     except:
       # pow must have failed, so extract gcd and return
-      return gcd(4*u*u*u*v,n)
+      return int(gcd(4*u*u*u*v,n))
     
     # sanity check - don't understand this. Can't we just set y=1, b=z^-1 mod n ?
     b = (u * pow(z0,-1,n) )%n
     g = gcd(( a * a - 4)* b, n)
     if (g>1):
-      return g
+      return int(g)
     y0 = (sigma*sigma-1)*(sigma*sigma-25)*(sigma**4-25) % n
     assert (b*y0*y0*z0) %n == (x0**3 + a*x0*x0*z0 + x0*z0*z0) %n
     Q = (x0,z0)
     if(timing): print("Curve construction took",round(perf_counter()-start,3),"sec");
 
+    a = mpz(a)
 
     # Phase 1
-    # it is marginally faster to pre-calculate the product of primes first
+    # it would be marginally faster to pre-calculate the product of primes first
     # than calculating montgomeryLadder for each prime,
-    # but might miss some factors
+    # but that might miss some factors
     start=perf_counter()
     primes_to_B1 = bisect.bisect_left(primes, B1)
     check_interval = int(primes_to_B1**0.5)
@@ -192,14 +201,14 @@ def montgomery(n, B1, B2, primes, count=0):
                     if (verbose): print('montgomery phase 1 intermediate found factor g='
                           ,g, "for n=",n,f"after {i} or fewer prime factors out of {primes_to_B1} ",
                           f"with check interval {check_interval}")   
-                    return g                   
+                    return int(g)                   
             pp *= p
     
     g = gcd(Q[1], n)
     
     if 1 < g < n:
         if (verbose): print('montgomery phase 1 found factor g=',g, "for n=",n)    
-        return g
+        return int(g)
 
     if(timing): print("phase 1 took",round(perf_counter()-start,3),"sec");
 
@@ -207,11 +216,11 @@ def montgomery(n, B1, B2, primes, count=0):
         print("we have missed a chance to spot a factor somewhere in phase 1")
         print("so can't proceed with phase 2")
         print(f"n={n} sigma={sigma} Q={Q} g={g}")
-        return n
+        return int(n)
 
     def normalise(P):
         # convert point (x,z) to (x/z,1)
-        return ( P[0]*pow(P[1],-1,n)%n, 1 )
+        return ( P[0]*invert(P[1],n)%n, 1 )
 
     """ Phase 2 
     Modifying ideas from [1] Paul Zimmermann. 20 years of ECM.
@@ -235,53 +244,59 @@ def montgomery(n, B1, B2, primes, count=0):
     (p-1)/2 to determine the array items as in [2]
     """
     start=perf_counter()
-    D= int(B2**0.5)+1
-    # array T holds points [0, Q, 2Q, 3Q, ...., (D-1)Q]
-    T = [0]*D
-    T[0]=(0,0)
-    T[1]= Q
-    T[2]=  duplicatePoint(Q[0],Q[1],a,n)  # = 2Q
+    D = int(B2**0.5)+1
+    while (D%4 != 0): D+=1 # make sure D is even and a multiple of 4
+    
+    # array T holds points [-, Q, 2Q, 3Q,-,5Q, ...., (D-1)Q] (odd numbers)
+    T = ["not a number"]*D
+    T[1]= [mpz(Q[0]),mpz(Q[1])]
+    T[2]= duplicatePoint(Q[0],Q[1],a,n)  # = 2Q
+    T[3]= addPoints2(T[2],Q,Q,n)       # = 3Q
 
-    for d in range(3,D):
-        T[d] =  addPoints2(T[d-1], Q, T[d-2], n)  # = dQ
+    for d in range(5,D,2):
+        T[d] =  addPoints2(T[d-2], T[2], T[d-4], n)  # = dQ
 
 
-    Tx = [(0,0)]
-    i=0
-    for t in T[1:]:
-        i+=1
+    Tx = ["not a number"]*D
+    for i in range(1,D,2):
         try:
-            Tx.append( (t[0]*pow(t[1],-1,n))%n )
+            Tx[i] = ( (T[i][0]*invert(T[i][1],n))% n )
         except:
-            g = gcd(t[1],n)
+            g = gcd(T[i][1],n)
             if (verbose): print(f"Factor {g} found in construction of Tx")
             if (verbose): print(f"t={t} n={n} sigma={sigma} i={i} T[i]={T[i]}")
-            return g
-    
-    DQ = addPoints2(T[D-1], Q, T[D-2], n)
+            return int(g)
+
+
+    # Montgomery ladder could undo the performance gain from only calculating odd values of T
+    # which is why D is set to be a multiple of 4 to allow the following calculation
+    DQ = addPoints2(T[D//2 + 1],T[D//2 -1 ],T[2],n)
+    #DQ2 = montgomeryLadder(D, Q[0], Q[1], a, n)
+    #assert samePoint(DQ,DQ2,n)
   
     #array S holds [0, DQ, 2DQ, 3DQ, .......... ]
     S = [False]*(D+2)
     S[0] = (0,0)
-    S[1] = DQ
+    S[1] = ( mpz(DQ[0]),mpz(DQ[1]) )
     S[2] =  duplicatePoint(DQ[0],DQ[1],a,n)  # = 2DQ
     for d in range(3,len(S)):
         S[d] =  addPoints2(S[d-1], DQ, S[d-2], n)  
 
-    Sx = [(0,0)]
+    Sx = ["not a number"]
     for s in S[1:]:
         try:
-            Sx.append( (s[0]*pow(s[1],-1,n))%n )
+            Sx.append( (s[0]*invert(s[1],n))%n )
         except:
             g = gcd(s[1],n)
             if (verbose): print(f"Factor {g} found in construction of Sx")
             if (verbose): print(f"s={s} n={n} sigma={sigma}")
-            return g
+            return int(g)
+
 
     if(timing):print("phase 2 S,T construction took",round(perf_counter()-start,3),"sec");
     start=perf_counter()
     
-    z=1
+    z=mpz(1)
     startindex = bisect.bisect_left(primes, B1)
     p0 = primes[startindex]
     s = p0//D
@@ -299,16 +314,17 @@ def montgomery(n, B1, B2, primes, count=0):
             g = gcd(z , n)
             if g>1:
                 if (verbose): print("Phase 2 intermediate found factor",g,"for n=",n,"sigma=",sigma)
-                return g
+                return int(g)
 
         z = (z * (Ssx - Tx[p-sD])) %n
+
     g = gcd(z , n)
     if g>1:
         if (verbose): print("Phase 2 found factor",g,"for n=",n,"sigma=",sigma)
-        return g
+        return int(g)
     
     if(timing):print("phase 2 main loop took",round(perf_counter()-start,3),"sec");
-    return n        
+    return int(n)        
     
     """
     unexpected items to investigate further:
@@ -327,6 +343,8 @@ def montgomery(n, B1, B2, primes, count=0):
     
 
 def factorECM(n, k=25, primes=None):
+    global timing, verbose
+    
     if isPrime(n,k): 
         return [n]
 
@@ -338,14 +356,18 @@ def factorECM(n, k=25, primes=None):
     curves = int( 3.76045 * exp(0.080348*len(str(n))))
              
     if (verbose): print(f"montgomery, n={n} B1={B1} B2={B2}")
-             
+
+    start=perf_counter()         
     if primes is None:
         sieveB2 = sieve(B2)
         primes = [p for p in range(B2) if sieveB2[p]]
+    if(timing): print("sieve took",round(perf_counter()-start,3),"sec");
 
+    start=perf_counter()
     for p in primes:
         if n%p==0:
             return [p]+factorECM(n//p, k, B1, B2, primes)
+    if(timing):print("small prime trial division took",round(perf_counter()-start,3),"sec");
 
     g = 1
     i = 0
@@ -375,14 +397,15 @@ if __name__ =="__main__":
 
     # multiple rounds of the same size factors
     setVerbose(False)
+    setTiming(False)
     start0 = perf_counter()
     for _ in range(10):
         i = 18  # number of digits in each prime factor
-        p = nextPrime( randrange(10**(i-1),10**i ) )
-        q = nextPrime( randrange(10**(i-1),10**i ) )
+        p = nextPrime( randrange(10**(i-1), 10**i ) )
+        q = nextPrime( randrange(10**(i-1), 10**i ) )
         print(f"{i} digits: ", end='')
         start= perf_counter()
-        f= factorECM(p*q )
+        f = factorECM( p*q )
         end= perf_counter()
         print(p*q,"=",f, round(end-start,1),"sec")
     print("\ntotal time:", perf_counter()-start0,"\n")
