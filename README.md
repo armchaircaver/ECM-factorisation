@@ -1,7 +1,7 @@
 # ECM-factorisation
 Python 3 program to factorise a number using the Elliptic Curve Method (ECM)
 
- This is an experiment to see how quickly a number could be factorised into primes using straightforward readable Python 3. Python 3.10 or higher is needed as the code uses pow(a,-1,n) to perform modular inversion.
+ This is an experiment to see how quickly a number could be factorised into primes using straightforward readable Python 3. Python 3.8 or higher is needed as the code uses pow(a,-1,n) to perform modular inversion.
  
  In tests with moderately sized factors up to 20 digits this algorithm outperforms pyecm, although I haven't experimented with tuning the parameters of pyecm.
 
