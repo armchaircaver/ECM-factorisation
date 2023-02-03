@@ -9,6 +9,7 @@ from math import exp
 from array import array
 import bisect
 try:
+  #raise Exception("test without GMP")
   from gmpy2 import mpz, invert, gcd
 except:
   from math import gcd
@@ -73,9 +74,6 @@ def sieve(n):
     for p in range(2, int(n**0.5)+1):
         if b[p]:
             b[p*p:n+1:p] = array('b',[0])*len(b[p*p:n+1:p])
-            #for i in range(p*p, n+5, p):
-            #    b[i] = 0
-    #print("Sieve took",perf_counter()-start,"sec")
     return b 
 
 
@@ -110,7 +108,7 @@ def duplicatePoint(x, z, a, n):
     #          = ( (x^2-z^2)^2,   4xz( (x-z)^2 + 4xz((a+2)/4)))
     
 
-# this isn't used  
+# this isn't used but is included for future use
 def duplicatePointA24(x, z, a24, n):
     u, v = x+z, x-z
     u2, v2 = u*u, v*v
@@ -146,7 +144,7 @@ def setTiming( x ):
     global timing
     timing=x
 
-def montgomery(n, B1, B2, primes, count=0):
+def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
 
     n = mpz(n)
     
@@ -175,10 +173,9 @@ def montgomery(n, B1, B2, primes, count=0):
       return int(g)
     y0 = (sigma*sigma-1)*(sigma*sigma-25)*(sigma**4-25) % n
     assert (b*y0*y0*z0) %n == (x0**3 + a*x0*x0*z0 + x0*z0*z0) %n
-    Q = (x0,z0)
+    Q = (mpz(x0),mpz(z0))
     if(timing): print("Curve construction took",round(perf_counter()-start,3),"sec");
 
-    a = mpz(a)
 
     # Phase 1
     # it would be marginally faster to pre-calculate the product of primes first
@@ -268,9 +265,7 @@ def montgomery(n, B1, B2, primes, count=0):
             return int(g)
 
 
-    # Montgomery ladder could undo the performance gain from only calculating odd values of T
-    # which is why D is set to be a multiple of 4 to allow the following calculation
-    DQ = addPoints2(T[D//2 + 1],T[D//2 -1 ],T[2],n)
+    DQ = addPoints2(T[D//2 + 1],T[D//2 -1 ],T[2],n) # need D=0 mod 4 for this to work
     #DQ2 = montgomeryLadder(D, Q[0], Q[1], a, n)
     #assert samePoint(DQ,DQ2,n)
   
@@ -294,35 +289,29 @@ def montgomery(n, B1, B2, primes, count=0):
 
 
     if(timing):print("phase 2 S,T construction took",round(perf_counter()-start,3),"sec");
+
+    # construct list containing (q,r)  for primes where p = q*D+r, 0<=r<D
+    start=perf_counter()
+    if len(primeqr)==0:
+      startindex = bisect.bisect_left(primes, B1)
+      for p in primes[startindex:] :
+        primeqr.append ( divmod(p,D) )
+      
+      if(timing): print("construction of primeqr took",perf_counter()-start,"sec")
+    
+
+    # main loop
     start=perf_counter()
     
-    z=mpz(1)
-    startindex = bisect.bisect_left(primes, B1)
-    p0 = primes[startindex]
-    s = p0//D
-    sD = s*D
-    sD1 = sD+D
-    Ssx = Sx[s]
-    for p in primes[startindex:] :
-        # test whether we need to move to another block, i.e. next S element
-        # if we do, take the opportunity to test gcd(z,n)
-        if p >= sD1:
-            s+=1
-            Ssx = Sx[s]
-            sD1+=D
-            sD+=D
-            g = gcd(z , n)
-            if g>1:
-                if (verbose): print("Phase 2 intermediate found factor",g,"for n=",n,"sigma=",sigma)
-                return int(g)
-
-        z = (z * (Ssx - Tx[p-sD])) %n
-
+    z = mpz(1)
+    for q,r in primeqr:
+      z = (z * (Sx[q] - Tx[r])) %n
+      
     g = gcd(z , n)
     if g>1:
-        if (verbose): print("Phase 2 found factor",g,"for n=",n,"sigma=",sigma)
-        return int(g)
-    
+      if (verbose): print("Phase 2 found factor",g,"for n=",n,"sigma=",sigma)
+      return int(g)
+
     if(timing):print("phase 2 main loop took",round(perf_counter()-start,3),"sec");
     return int(n)        
     
@@ -372,10 +361,11 @@ def factorECM(n, k=25, primes=None):
     g = 1
     i = 0
     start=perf_counter()
+    primeqr = []
     while g==1 or g==n: # tant qu'on n'a pas de facteur
         # on essaye avec d'autres valeurs
         i +=1
-        g=montgomery(n, B1, B2, primes, i)  
+        g=montgomery(n, B1, B2, primes, i, primeqr)  
     if (verbose): print(f"{i} curves needed")
                        
     return factorECM(g, k, primes)+factorECM(n//g, k, primes)
@@ -397,7 +387,7 @@ if __name__ =="__main__":
 
     # multiple rounds of the same size factors
     setVerbose(False)
-    setTiming(False)
+    setTiming(True)
     start0 = perf_counter()
     for _ in range(10):
         i = 18  # number of digits in each prime factor
@@ -410,7 +400,7 @@ if __name__ =="__main__":
         print(p*q,"=",f, round(end-start,1),"sec")
     print("\ntotal time:", perf_counter()-start0,"\n")
 
-    for i in range(17,25):
+    for i in range(17,31):
         p = nextPrime( randrange(10**(i-1),10**i ) )
         q = nextPrime( randrange(10**(i-1),10**i ) )
         print(f"{i} digits: ", end='')
