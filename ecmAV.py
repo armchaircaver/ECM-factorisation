@@ -146,6 +146,9 @@ def setTiming( x ):
 
 def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
 
+    if verbose: print(f"montgomery n={n}")
+    assert(n&1)
+    
     n = mpz(n)
     
     # construct a curve and initial point
@@ -328,36 +331,56 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
     sigma=543520334 i=706
     T[i]=(14663344385599636251700342797170066, 15827680063744479454684689712136160)
     """
-
+#------------------------------------------------------------------------------
     
 
 def factorECM(n, k=25, primes=None):
     global timing, verbose
-    
+
     if isPrime(n,k): 
         return [n]
 
-    # curve fitting B1,B2,curves from data in
-    # https://github.com/sethtroisi/gmp-ecm/blob/master/README
-    # assuming n is a semiprime with 2 similarly sized factors
-    B1 = int( 28.6676* exp(0.147729* len(str(n))))
-    B2 =int( 326.260 * exp(0.211736*len(str(n))))
-    curves = int( 3.76045 * exp(0.080348*len(str(n))))
-             
-    if (verbose): print(f"montgomery, n={n} B1={B1} B2={B2}")
+
+              
+    if (verbose): print(f"factorECM, n={n}")
 
     start=perf_counter()         
     if primes is None:
-        sieveB2 = sieve(B2)
-        primes = [p for p in range(B2) if sieveB2[p]]
-    if(timing): print("sieve took",round(perf_counter()-start,3),"sec");
+      SPlim=1000000
 
-    start=perf_counter()
-    for p in primes:
-        if n%p==0:
-            return [p]+factorECM(n//p, k, B1, B2, primes)
-    if(timing):print("small prime trial division took",round(perf_counter()-start,3),"sec");
+      if (verbose): print(f"factorECM, sieving SF")
+      sieveSF = sieve(SPlim)
+      if (verbose): print(f"factorECM, finished sieving SF")
+ 
+      start=perf_counter()
+      smallfactors=[]
+      for p in range(2,SPlim):
+        if sieveSF[p]:
+          while n%p==0:
+              smallfactors.append(p)
+              n//=p
+      if(timing):print("factorECM small prime trial division took",round(perf_counter()-start,3),"sec");
+      if (verbose): print(f"factorECM, smallfactors",smallfactors)
 
+      if isPrime(n,k): 
+          return smallfactors+[n]
+        
+      # curve fitting B1,B2,curves from data in
+      # https://github.com/sethtroisi/gmp-ecm/blob/master/README
+      # assuming n is a semiprime with 2 similarly sized factors
+      B1 = int( 28.6676* exp(0.147729* len(str(n))))
+      B2 =int( 326.260 * exp(0.211736*len(str(n))))
+      curves = int( 3.76045 * exp(0.080348*len(str(n))))
+      
+      if (verbose): print(f"factorECM, sieving up to B2={B2}")
+      sieveB2 = sieve(B2)
+      if (verbose): print(f"factorECM, finished sieving")
+      primes = [p for p in range(B2) if sieveB2[p]]
+
+    if(timing): print(f"factorECM sieve for n={n} to B2={B2} took",round(perf_counter()-start,3),"sec");
+
+
+      
     g = 1
     i = 0
     start=perf_counter()
@@ -368,26 +391,37 @@ def factorECM(n, k=25, primes=None):
         g=montgomery(n, B1, B2, primes, i, primeqr)  
     if (verbose): print(f"{i} curves needed")
                        
-    return factorECM(g, k, primes)+factorECM(n//g, k, primes)
+    return smallfactors + factorECM(g, k)+factorECM(n//g, k)
+
+
 
 if __name__ =="__main__":
-    """
-    for i in range(2):
-        a=nextPrime(randint(1e8,1e12))    
-        b=nextPrime(randint(1e8,1e10))
-        c=randint(1e8,1e10) 
-        n=a*b*c
-        print(f'n={a}*{b}*{c}=',n)
-        t=time()
-        f=factorECM(n)  
-        t=time()-t  
-        print('les facteurs de n sont',f,'t=',round(t,1),'s')
-        print()
-    """
+    from functools import reduce
+
+    
+    setTiming(False)
+    setVerbose(False)
+    trials = [95185297426160521695860779427995281935275,
+              97310386288595303632429456851128058791548,
+              532123308939657437480746203701315959374550822002194588179897, 
+              #194684546363820970462807862979880002747247709894380352721688, #small *5601227* p20*p21
+              #939397082339643433664464465819696119447505323804397628709627  # 3*p25*p35 - leave this for now
+              ]
+    for i in range(10):
+        trials.append(  randint(10**40,10**41)  )
+
+    for n in trials:    
+        print(f"\n{n} =")
+        start= perf_counter()
+        f = factorECM( n )
+        end= perf_counter()
+        verify = reduce((lambda x, y: x * y), f)
+        assert(verify == n)
+        print(f, round(end-start,1),"sec")
 
     # multiple rounds of the same size factors
     setVerbose(False)
-    setTiming(True)
+    setTiming(False)
     start0 = perf_counter()
     for _ in range(10):
         i = 18  # number of digits in each prime factor
