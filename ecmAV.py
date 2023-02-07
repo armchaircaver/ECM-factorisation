@@ -16,6 +16,45 @@ except:
   def invert(a,n): return pow(a,-1,n)
   def mpz(x): return x
 
+try:
+  #raise Exception("test without GMP")
+  import gmpy2
+  SMALLPRIMELIM = 1_000_000
+
+  # from gmpy2 docs https://gmpy2.readthedocs.io/en/latest/advmpz.html
+  def sieve(n):
+    '''Returns a generator that yields the prime numbers up to limit.'''
+
+    # Increment by 1 to account for the fact that slices  do not include
+    # the last index value but we do want to include the last value for
+    # calculating a list of primes.
+    sieve_limit = gmpy2.isqrt(n) + 1
+    n += 1
+
+    # Mark bit positions 0 and 1 as not prime.
+    bitmap = gmpy2.xmpz(3)
+
+    # Process 2 separately. This allows us to use p+p for the step size
+    # when sieving the remaining primes.
+    bitmap[4 : n : 2] =  ~0
+
+    # Sieve the remaining primes.
+    for p in bitmap.iter_clear(3, sieve_limit):
+        bitmap[p*p : n : p+p] = -1
+
+    return bitmap.iter_clear(2, n)  # clear bits denote a prime
+  
+except:  
+  SMALLPRIMELIM = 100_000
+  # Eratosthenes - returns generator
+  def sieve(n):
+    b = array('b',[0,0]) + array('b',[1])*(n-1)
+    for p in range(2, int(n**0.5)+1):
+      if b[p]:  b[p*p:n+1:p] = array('b',[0])*len(b[p*p:n+1:p])
+    for i,x in enumerate(b):
+      if x: yield i
+
+
 def millerTest(a,d,n,r):
     # test de Miller pour un témoin a
     # Retourne faux si n est composé et vrai si n est probablement premier
@@ -64,17 +103,6 @@ def nextPrime(n):
     while not isPrime(n):
         n += 1
     return n
-
-# Eratosthenes - returns an array b where b[i]=1 iff i is prime
-def sieve(n):
-    start=perf_counter()
-    b = array('b',[1])*(n+5)
-    b[0]=0
-    b[1]=0
-    for p in range(2, int(n**0.5)+1):
-        if b[p]:
-            b[p*p:n+1:p] = array('b',[0])*len(b[p*p:n+1:p])
-    return b 
 
 
 # Addition de deux points d'une courbe de Montgomery
@@ -144,6 +172,8 @@ def setTiming( x ):
     global timing
     timing=x
 
+#---------------------------------------------------------------------------------
+    
 def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
 
     if verbose: print(f"montgomery n={n}")
@@ -263,8 +293,8 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
             Tx[i] = ( (T[i][0]*invert(T[i][1],n))% n )
         except:
             g = gcd(T[i][1],n)
-            if (verbose): print(f"Factor {g} found in construction of Tx")
-            if (verbose): print(f"t={t} n={n} sigma={sigma} i={i} T[i]={T[i]}")
+            if (verbose): print(f"Factor {g} found in construction of Tx",
+                                f"t={t} n={n} sigma={sigma} i={i} T[i]={T[i]}")
             return int(g)
 
 
@@ -352,9 +382,8 @@ def iterativeECM(factors) :
       curves = int( 3.76045 * exp(0.080348*len(str(p))))
       
       if (verbose): print(f"factorECM, sieving up to B2={B2}")
-      sieveB2 = sieve(B2)
+      primes = list(sieve(B2))
       if (verbose): print(f"factorECM, finished sieving")
-      primes = [p for p in range(B2) if sieveB2[p]]
       primesqr = []
       count = 1;
       while (p==factors[i]):
@@ -368,26 +397,17 @@ def iterativeECM(factors) :
  
 #--------------------------------------------------------------------------------------   
 
-def factorECM(n, k=25, primes=None):
+def factorECM(n):
     global timing, verbose
 
-    if isPrime(n,k): 
+    if isPrime(n): 
         return [n]
              
     if (verbose): print(f"factorECM, n={n}")
 
-    start=perf_counter()         
-
-    SPlim=1000000
-
-    if (verbose): print(f"factorECM, sieving SF")
-    sieveSF = sieve(SPlim)
-    if (verbose): print(f"factorECM, finished sieving SF")
-
     start=perf_counter()
     factors=[]
-    for p in range(2,SPlim):
-      if sieveSF[p]:
+    for p in sieve(SMALLPRIMELIM):
         while n%p==0:
             factors.append(p)
             n//=p
@@ -398,7 +418,7 @@ def factorECM(n, k=25, primes=None):
       return factors
     
     factors.append(n)
-    if isPrime(n,k): 
+    if isPrime(n): 
         return factors
       
     iterativeECM(factors)
