@@ -14,10 +14,12 @@ The ECM algorithm uses Montgomery elliptic curves with Suyama parameterisation t
 Phase 1 multiplies the initial point on the elliptic curve by all prime powers pn < B1 to produce a point Q on the curve
 
 Phase 2 calculates multiples pQ for each prime B1 < p ≤ B2
-Multiples of Q : [Q,2Q,3Q,..,(D-1)Q] and [DQ,2DQ,3DQ,...], where D is set to √B2 , are pre-calculated and then used to calculate pQ = kDQ + rQ where 0 ≤ r < D
+Multiples of Q : [Q,2Q,3Q,..,(D-1)Q] and [DQ,2DQ,3DQ,...], where D is set to √(2*B2) , are pre-calculated and then used to calculate pQ = kDQ + rQ where 0 ≤ r < D
 The pre-calculated multiples mQ=(x,z) are converted to (x/z,1) to simplify the calculation of pQ
 
-Bounds B1 and B2 are calculated from the size of the number to be factored, based on the table in [3], and assumes that the number to be factored is a semiprime with 2 similarly sized factors
+Bounds B1 and B2 are calculated from the size of the number to be factored, based on the formula in [4], and assumes the worst case, i.e. that the number to be factored is a semiprime with 2 similarly sized factors
+
+
 References
 
 [1] P. Zimmermann. 20 years of ECM. 7th Algorithmic Number Theory Symposium (ANTS VII),2006, Berlin, pp.525–542. inria-00070192v1 https://hal.inria.fr/inria-00070192v1/document
@@ -25,6 +27,8 @@ References
 [2] R.Brent, Factorization Of The Tenth Fermat Number, 1999, Mathematics of Computation, Vol. 68, p. 429-451 https://www.ams.org/journals/mcom/1999-68-225/S0025-5718-99-00992-8/S0025-5718-99-00992-8.pdf
 
 [3] README file for GMP-ECM https://github.com/sethtroisi/gmp-ecm/blob/master/README
+
+[4] Optimal parameters for ECM, https://members.loria.fr/PZimmermann/records/ecm/params.html
 
 Typical use:
 
