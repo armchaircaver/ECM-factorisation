@@ -1,20 +1,29 @@
+# Factorisation program with trial division and Elliptic Curve Method (ECM)
 # extensively adapted from
 # https://www.codingame.com/playgrounds/54090/factorisation-ecm-version-montgomery
 # (which is why some comments are in French)
-# arthur.vause@gmail.com
+
+# arthur.vause@gmail.com 
 
 from time import time, perf_counter
 from random import randint, randrange
-from math import exp
-from array import array
+from math import exp, prod
+import math
 import bisect
+from functools import reduce
+
 try:
   #raise Exception("test without GMP")
-  from gmpy2 import mpz, invert, gcd
+  from gmpy2 import mpz, invert, gcd, xmpz
 except:
   from math import gcd
   def invert(a,n): return pow(a,-1,n)
   def mpz(x): return x
+  def xmpz(x): return x
+
+# implementations of sieve(n), generator of primes up to and including n
+#  with and without gmpy2.
+# The gmpy2 version is an order of magnitude faster.
 
 try:
   #raise Exception("test without GMP")
@@ -23,7 +32,7 @@ try:
 
   # from gmpy2 docs https://gmpy2.readthedocs.io/en/latest/advmpz.html
   def sieve(n):
-    '''Returns a generator that yields the prime numbers up to limit.'''
+    '''Returns a generator that yields the prime numbers up to n.'''
 
     # Increment by 1 to account for the fact that slices  do not include
     # the last index value but we do want to include the last value for
@@ -45,14 +54,18 @@ try:
     return bitmap.iter_clear(2, n)  # clear bits denote a prime
   
 except:  
-  SMALLPRIMELIM = 100_000
-  # Eratosthenes - returns generator
+  SMALLPRIMELIM = 200_000
+  # Eratosthenes -  generator
+  # adapted from https://codereview.stackexchange.com/questions/219998/implementing-sieve-of-eratosthenes-faster
   def sieve(n):
-    b = array('b',[0,0]) + array('b',[1])*(n-1)
-    for p in range(2, int(n**0.5)+1):
-      if b[p]:  b[p*p:n+1:p] = array('b',[0])*len(b[p*p:n+1:p])
-    for i,x in enumerate(b):
-      if x: yield i
+    a = bytearray(n+1)
+    a[1:n+1:2] = [1]*len(a[1:n+1:2])
+    a[1:3] = [0, 1]
+    for i in range(3, int(n**0.5)+1, 2):
+      if a[i]:  a[i*i:n+1:2*i] = bytes(len(a[i*i:n+1:2*i]))
+    yield 2  
+    for i,x in enumerate(a[3:n+1:2]):
+      if x: yield 2*i+3
 
 
 def millerTest(a,d,n,r):
@@ -151,16 +164,18 @@ def samePoint(P,Q,n):
 
 
 def montgomeryLadder(k, px, pz, a, n):
-    qx, qz = px, pz                                        # Q = P
-    rx, rz = duplicatePoint(px, pz, a, n)                  # R = 2P
+    qx, qz = px, pz                                        # Q <= P
+    rx, rz = duplicatePoint(px, pz, a, n)                  # R <= 2P
     for c in bin(k)[3:]:
         if c == '1':
-            qx, qz = addPoints(rx, rz, qx, qz, px, pz, n)  # Q = R+Q
-            rx, rz = duplicatePoint(rx, rz, a, n)          # R = 2R
+            qx, qz = addPoints(rx, rz, qx, qz, px, pz, n)  # Q <= R+Q
+            rx, rz = duplicatePoint(rx, rz, a, n)          # R <= 2R
         else:
-            rx, rz = addPoints(qx, qz, rx, rz, px, pz, n)  # R = Q+R
-            qx, qz = duplicatePoint(qx, qz, a, n)          # Q = 2Q
+            rx, rz = addPoints(qx, qz, rx, rz, px, pz, n)  # R <= Q+R
+            qx, qz = duplicatePoint(qx, qz, a, n)          # Q <= 2Q
     return qx, qz
+
+#---------------------------------------------------------------------------------
 
 verbose = False # switch for information about the search
 def setVerbose( x ):
@@ -215,7 +230,7 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
     # than calculating montgomeryLadder for each prime,
     # but that might miss some factors
     start=perf_counter()
-    primes_to_B1 = bisect.bisect_left(primes, B1)
+    primes_to_B1 = bisect.bisect_right(primes, B1)
     check_interval = int(primes_to_B1**0.5)
     i=0
     for p in primes:
@@ -240,7 +255,7 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
         if (verbose): print('montgomery phase 1 found factor g=',g, "for n=",n)    
         return int(g)
 
-    if(timing): print("phase 1 took",round(perf_counter()-start,3),"sec");
+    if(timing): print(f"phase 1 for B1={B1} took",round(perf_counter()-start,3),"sec");
 
     if Q[1]==0 or g!=1:
         print("we have missed a chance to spot a factor somewhere in phase 1")
@@ -257,8 +272,8 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
     7th Algorithmic Number Theory Symposium (ANTS VII),2006, Berlin, pp.525–542. inria-00070192v1
     https://hal.inria.fr/inria-00070192v1/document
 
-    Define D = sqrt(B2)+1
-    Construct arrays of points S = [0, DQ, 2DQ, 3DQ,.. ] and T = [0, Q, 2Q, 3Q, ...., (D-1)Q]
+    Define D = sqrt(2*B2)+1 , and adjust upwards to ensure D is even
+    Construct arrays of points S = [0, DQ, 2DQ, 3DQ,.. [B2//D]Q] and T = [0,Q,2Q,3Q 5Q,7Q,...., (D-1)Q]
 
     represent a prime p as p=kD+r (0<=r<D)
     pQ = S[k]+T[r], so we extract the x coordinate from  S[k]+T[r]
@@ -274,7 +289,7 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
     (p-1)/2 to determine the array items as in [2]
     """
     start=perf_counter()
-    D = int(B2**0.5)+1
+    D = int((2*B2)**0.5)+1
     while (D%4 != 0): D+=1 # make sure D is even and a multiple of 4
     
     # array T holds points [-, Q, 2Q, 3Q,-,5Q, ...., (D-1)Q] (odd numbers)
@@ -302,8 +317,8 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
     #DQ2 = montgomeryLadder(D, Q[0], Q[1], a, n)
     #assert samePoint(DQ,DQ2,n)
   
-    #array S holds [0, DQ, 2DQ, 3DQ, .......... ]
-    S = [False]*(D+2)
+    #array S holds [0, DQ, 2DQ, 3DQ, ..........[B2//D]Q ]
+    S = [False]*(B2//D+1)
     S[0] = (0,0)
     S[1] = ( mpz(DQ[0]),mpz(DQ[1]) )
     S[2] =  duplicatePoint(DQ[0],DQ[1],a,n)  # = 2DQ
@@ -321,7 +336,7 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
             return int(g)
 
 
-    if(timing):print("phase 2 S,T construction took",round(perf_counter()-start,3),"sec");
+    if(timing):print("phase 2 S,T construction took",round(perf_counter()-start,3),f"sec for {D+2} S, {D} T values");
 
     # construct list containing (q,r)  for primes where p = q*D+r, 0<=r<D
     start=perf_counter()
@@ -329,23 +344,38 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
       startindex = bisect.bisect_left(primes, B1)
       for p in primes[startindex:] :
         primeqr.append ( divmod(p,D) )
-      
+        
       if(timing): print(f"construction of primeqr for n={n} took",perf_counter()-start,"sec")
     
 
-    # main loop
+    # main loop of stage 2
     start=perf_counter()
     
-    z = mpz(1)
+    #z = xmpz(1)
+    #for q,r in primeqr:
+    #  z = (z * (Sx[q] - Tx[r])) %n
+
+    z = xmpz(1)
     for q,r in primeqr:
-      z = (z * (Sx[q] - Tx[r])) %n
-      
+      z *= Sx[q] - Tx[r] 
+      z %= n
+
+    # Experiments that turned out to be slower than a simple "for" loop
+    #z = reduce( (lambda x, y: x * y %n), map(lambda x:Sx[x[0]] - Tx[x[1]] , primeqr))
+    #z = reduce( lambda x, y: x*(Sx[y[0]] - Tx[y[1]]) %n , [xmpz(1)]+primeqr )
+
+    #mapprq = map(lambda x: Sx[x[0]] - Tx[x[1]] , primeqr)
+    #z = reduce( (lambda x, y: x * y %n), mapprq)
+    
+    if(timing):print("phase 2 main loop took",round(perf_counter()-start,3),f"sec for {len(primeqr)} primes");
+
+    start=perf_counter()
     g = gcd(z , n)
+    if(timing):print("phase 2 gcd took",round(perf_counter()-start,3),"sec");
     if g>1:
       if (verbose): print("Phase 2 found factor",g,"for n=",n,"sigma=",sigma)
       return int(g)
 
-    if(timing):print("phase 2 main loop took",round(perf_counter()-start,3),"sec");
     return int(n)        
     
     """
@@ -371,15 +401,14 @@ def iterativeECM(factors) :
     if (isPrime( factors[i] ) ):
       i+=1
     else:
+      start = perf_counter()
       p = factors[i]
       
-      # curve fitting B1,B2,curves from data in
-      # https://github.com/sethtroisi/gmp-ecm/blob/master/README
-      # assuming n is a semiprime with 2 similarly sized factors
-      B1 = int( 28.6676* exp(0.147729* len(str(p))))
-      B2 =int( 326.260 * exp(0.211736*len(str(p))))
-      if B2 > 20_000_000: B2=20_000_000 # we will have to take a chance
-      curves = int( 3.76045 * exp(0.080348*len(str(p))))
+      # B1 based on https://members.loria.fr/PZimmermann/records/ecm/params.html
+      # B2 set to run Stage 2 for similar length of time as Stage 1
+      bits_in_factor = p.bit_length()//2
+      B1 = int(math.exp(.075*bits_in_factor + 5.332))
+      B2=200*B1
       
       if (verbose): print(f"factorECM, sieving up to B2={B2}")
       primes = list(sieve(B2))
@@ -430,17 +459,14 @@ def factorECM(n):
 if __name__ =="__main__":
     from functools import reduce
 
+    setTiming(0)
+    n=1010101010101010101010101010101010101
+    f = factorECM( n )
+    print(n,f)
     
-    setTiming(False)
-    setVerbose(False)
-    trials = [95185297426160521695860779427995281935275,
-              97310386288595303632429456851128058791548,
-              532123308939657437480746203701315959374550822002194588179897, 
-              #194684546363820970462807862979880002747247709894380352721688, #small *5601227* p20*p21
-              #939397082339643433664464465819696119447505323804397628709627  # 3*p25*p35 - leave this for now
-              ]
-    for i in range(10):
-        trials.append(  randint(10**19,10**20)*randint(10**19,10**20)*randint(10**19,10**20)  )
+    setTiming(0)
+    setVerbose(0)
+    trials = [  randint(10**19,10**20)*randint(10**19,10**20)*randint(10**19,10**20)   for i in range(3) ]
     print("\nProducts of random 20 digit numbers:")
     for n in trials:    
         print(f"\n{n} =")
@@ -456,8 +482,8 @@ if __name__ =="__main__":
     setTiming(False)
     start0 = perf_counter()
     print("\nTime trial semiprimes:")
-    for _ in range(10):
-        i = 18  # number of digits in each prime factor
+    for _ in range(5):
+        i = 20  # number of digits in each prime factor
         p = nextPrime( randrange(10**(i-1), 10**i ) )
         q = nextPrime( randrange(10**(i-1), 10**i ) )
         print(f"{i} digits: ", end='')
@@ -476,6 +502,14 @@ if __name__ =="__main__":
         end= perf_counter()
         print(p*q,"=",f, round(end-start,1),"sec")
 
+    trials = [ # example from https://stackoverflow.com/questions/54176869/how-can-i-improve-this-code-of-elliptic-curve-factorization/69762662#69762662
+              45733304697523851846830687775886905451041736136239,
+              95185297426160521695860779427995281935275,
+              97310386288595303632429456851128058791548,
+              532123308939657437480746203701315959374550822002194588179897, 
+              194684546363820970462807862979880002747247709894380352721688, #small *5601227* p20*p21
+              939397082339643433664464465819696119447505323804397628709627  # 3*p25*p35 - leave this for now
+              ]
 
 
 
