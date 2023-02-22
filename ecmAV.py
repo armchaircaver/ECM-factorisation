@@ -13,8 +13,8 @@ import bisect
 from functools import reduce
 
 try:
-  #raise Exception("test without GMP")
-  from gmpy2 import mpz, invert, gcd, xmpz
+  raise Exception("test without GMP")
+  from gmpy2 import mpz, invert, gcd, xmpz, gcdext
 except:
   from math import gcd
   def invert(a,n): return pow(a,-1,n)
@@ -26,7 +26,7 @@ except:
 # The gmpy2 version is an order of magnitude faster.
 
 try:
-  #raise Exception("test without GMP")
+  raise Exception("test without GMP")
   import gmpy2
   SMALLPRIMELIM = 1_000_000
 
@@ -131,6 +131,17 @@ def addPoints(xp, zp, xq, zq, xpq, zpq, n):
     Z = (t * xpq) %n
     return X, Z
 
+# add points that are represented as (x::1), i.e. z coordinate = 1
+# returns (x,g) an x coordinate and gcd of inversion step
+# if gcd > 1, then the inversion has failed, but we have found a factor of n
+def addPointsX(xp, xq, xpq, n):
+  try:
+    Zinv = invert((xq-xp)**2 * xpq, n)
+    return ( ((xp*xq -1)**2 * Zinv ) %n, 1 )
+  except:
+    return (0, gcd((xq-xp)**2 * xpq , n) )
+
+
 def addPoints2( P, Q, PmQ, n):
     return addPoints(P[0],P[1],Q[0],Q[1],PmQ[0],PmQ[1],n)
 
@@ -176,7 +187,6 @@ def montgomeryLadder(k, px, pz, a, n):
     return qx, qz
 
 #---------------------------------------------------------------------------------
-
 verbose = False # switch for information about the search
 def setVerbose( x ):
     global verbose
@@ -188,7 +198,57 @@ def setTiming( x ):
     timing=x
 
 #---------------------------------------------------------------------------------
-    
+
+def stage2preparation(B2,Q,a,n):
+  
+  start=perf_counter()
+  D = int((2*B2)**0.5)+1
+  while (D%4 != 0): D+=1 # make sure D is even and a multiple of 4
+  
+  # array T holds points [None,Q,2Q,3Q,None,5Q,None, ...., (D-1)Q] (odd numbers)
+  # array S holds [None, DQ, 2DQ, 3DQ, ..........[(B2//D)*D]Q ]
+  # this is messy due to the need to check whether modular inversion
+  # is successful at each point, and to calculate the gcd if not
+
+  T = [None]*D
+  S = [None]*(B2//D+1)
+
+  try: T[1] = Q[0]*invert(Q[1],n)%n
+  except:  return gcd(Q[1],n),D,S,T
+
+  _2Q = duplicatePoint(Q[0],Q[1],a,n)  # = 2Q
+  try: T[2] = _2Q[0] * invert(_2Q[1],n)%n
+  except:  return gcd(_2Q[1],n),D,S,T
+
+  T[3],g = addPointsX(T[2],T[1],T[1],n)       # = 3Q
+  if g>1:  return g,D,S,T
+
+  for d in range(5,D,2):
+      T[d],g =  addPointsX(T[d-2], T[2], T[d-4], n)  # = dQ
+      if g>1: return g,D,S,T
+
+  assert samePoint( (T[D-1],1), montgomeryLadder(D-1, Q[0],Q[1],a,n),n )
+
+  
+  DQ,g = addPointsX(T[D//2 + 1], T[D//2 -1 ], T[2], n) # need D=0 mod 4 for this to work
+  if g>1:  return g,D,S,T
+
+  S[1] = DQ
+
+  _2DQ =  duplicatePoint(DQ,1,a,n)  # = 2DQ
+  try : S[2] = _2DQ[0] * invert(_2DQ[1],n)%n
+  except: return gcd(_2DQ[1],n),D,S,T
+
+  for d in range(3,len(S)):
+      S[d],g =  addPointsX(S[d-1], DQ, S[d-2], n)
+      if g>1:  return g,D,S,T
+
+  assert samePoint( (S[B2//D],1), montgomeryLadder( (B2//D)*D, Q[0],Q[1],a,n),n )
+
+  if(timing):print("phase 2 S,T construction took",round(perf_counter()-start,3),f"sec for {B2//D+1} S, {D//2} T values");
+
+  return g,D,S,T
+#---------------------------------------------------------------------------------
 def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
 
     if verbose: print(f"montgomery n={n}")
@@ -199,11 +259,7 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
     # construct a curve and initial point
     # suyama curve from https://members.loria.fr/PZimmermann/papers/ecm.pdf
     start=perf_counter()
-    if count==1:
-        sigma=11
-    else:
-        sigma = randint(6, 2**31-1)
-        
+    sigma = randint(6, 2**31-1)
     u = (sigma*sigma-5)%n
     v= (4*sigma)%n
     x0 = u*u*u %n
@@ -258,122 +314,56 @@ def montgomery(n, B1, B2, primes, count=0, primeqr=[]):
     if(timing): print(f"phase 1 for B1={B1} took",round(perf_counter()-start,3),"sec");
 
     if Q[1]==0 or g!=1:
-        print("we have missed a chance to spot a factor somewhere in phase 1")
-        print("so can't proceed with phase 2")
-        print(f"n={n} sigma={sigma} Q={Q} g={g}")
+        print("we have missed a chance to spot a factor somewhere in phase 1\n",
+        f"so can't proceed with phase 2, n={n} sigma={sigma} Q={Q} g={g}")
         return int(n)
 
-    def normalise(P):
-        # convert point (x,z) to (x/z,1)
-        return ( P[0]*invert(P[1],n)%n, 1 )
-
     """ Phase 2 
-    Modifying ideas from [1] Paul Zimmermann. 20 years of ECM.
+    Modifying ideas from
+
+    [1] Paul Zimmermann. 20 years of ECM.
     7th Algorithmic Number Theory Symposium (ANTS VII),2006, Berlin, pp.525–542. inria-00070192v1
-    https://hal.inria.fr/inria-00070192v1/document
+    https://hal.inria.fr/inria-00070192v1/document 
+
+    [2] Factorization Of The Tenth Fermat Number, Brent 1999,
+    https://www.ams.org/journals/mcom/1999-68-225/S0025-5718-99-00992-8/S0025-5718-99-00992-8.pdf
 
     Define D = sqrt(2*B2)+1 , and adjust upwards to ensure D is even
-    Construct arrays of points S = [0, DQ, 2DQ, 3DQ,.. [B2//D]Q] and T = [0,Q,2Q,3Q 5Q,7Q,...., (D-1)Q]
+    Construct arrays of points S = [0, DQ, 2DQ, 3DQ,.. [B2-B2%D]Q] and T = [0,Q,2Q,3Q 5Q,7Q,...., (D-1)Q]
+     ~ sqrt(2*B2) points.
 
-    represent a prime p as p=kD+r (0<=r<D)
-    pQ = S[k]+T[r], so we extract the x coordinate from  S[k]+T[r]
+    Represent a prime p as p=kD+r (0<=r<D)
+    pQ = S[k]+T[r], so we extract the relevant part of the z coordinate from  S[k]+T[r]
 
-    Using this strategy, we need to calculate more points than in the improved standard
-    continuation in [2] Factorization Of The Tenth Fermat Number, Brent 1999,
-    https://www.ams.org/journals/mcom/1999-68-225/S0025-5718-99-00992-8/S0025-5718-99-00992-8.pdf
-    which pre-calculates [1,2D+1,4D+1,... ] and [2,4,...D],
-    We calculate 2*sqrt(B2) vs sqrt(2*B2) of Brent.
-
-    However the main loop is better here, as we don't calculate the main loop for composites as in [1],
-    or have a more complex calculation of to determine the elements of arrays to add, i.e. calculate
-    (p-1)/2 to determine the array items as in [2]
+    In a similar manner, [2] pre-calculates [1,2D+1,4D+1,... ] and [2,4,...D], 
     """
-    start=perf_counter()
-    D = int((2*B2)**0.5)+1
-    while (D%4 != 0): D+=1 # make sure D is even and a multiple of 4
-    
-    # array T holds points [-, Q, 2Q, 3Q,-,5Q, ...., (D-1)Q] (odd numbers)
-    T = ["not a number"]*D
-    T[1]= [mpz(Q[0]),mpz(Q[1])]
-    T[2]= duplicatePoint(Q[0],Q[1],a,n)  # = 2Q
-    T[3]= addPoints2(T[2],Q,Q,n)       # = 3Q
 
-    for d in range(5,D,2):
-        T[d] =  addPoints2(T[d-2], T[2], T[d-4], n)  # = dQ
-
-
-    Tx = ["not a number"]*D
-    for i in range(1,D,2):
-        try:
-            Tx[i] = ( (T[i][0]*invert(T[i][1],n))% n )
-        except:
-            g = gcd(T[i][1],n)
-            if (verbose): print(f"Factor {g} found in construction of Tx",
-                                f"t={t} n={n} sigma={sigma} i={i} T[i]={T[i]}")
-            return int(g)
-
-
-    DQ = addPoints2(T[D//2 + 1],T[D//2 -1 ],T[2],n) # need D=0 mod 4 for this to work
-    #DQ2 = montgomeryLadder(D, Q[0], Q[1], a, n)
-    #assert samePoint(DQ,DQ2,n)
-  
-    #array S holds [0, DQ, 2DQ, 3DQ, ..........[B2//D]Q ]
-    S = [False]*(B2//D+1)
-    S[0] = (0,0)
-    S[1] = ( mpz(DQ[0]),mpz(DQ[1]) )
-    S[2] =  duplicatePoint(DQ[0],DQ[1],a,n)  # = 2DQ
-    for d in range(3,len(S)):
-        S[d] =  addPoints2(S[d-1], DQ, S[d-2], n)  
-
-    Sx = ["not a number"]
-    for s in S[1:]:
-        try:
-            Sx.append( (s[0]*invert(s[1],n))%n )
-        except:
-            g = gcd(s[1],n)
-            if (verbose): print(f"Factor {g} found in construction of Sx")
-            if (verbose): print(f"s={s} n={n} sigma={sigma}")
-            return int(g)
-
-
-    if(timing):print("phase 2 S,T construction took",round(perf_counter()-start,3),f"sec for {D+2} S, {D} T values");
+    g,D,S,T = stage2preparation(B2,Q,a,n)
+    if g>1:
+      return g
 
     # construct list containing (q,r)  for primes where p = q*D+r, 0<=r<D
-    start=perf_counter()
     if len(primeqr)==0:
-      startindex = bisect.bisect_left(primes, B1)
-      for p in primes[startindex:] :
-        primeqr.append ( divmod(p,D) )
-        
-      if(timing): print(f"construction of primeqr for n={n} took",perf_counter()-start,"sec")
+      start=perf_counter()
+      primeqr += [divmod(p,D) for p in primes[bisect.bisect_left(primes, B1):] ]
+      if(timing): print(f"construction of primeqr for n={n} took",perf_counter()-start,f"sec for {len(primeqr)} primes")
     
 
     # main loop of stage 2
     start=perf_counter()
     
-    #z = xmpz(1)
-    #for q,r in primeqr:
-    #  z = (z * (Sx[q] - Tx[r])) %n
-
     z = xmpz(1)
     for q,r in primeqr:
-      z *= Sx[q] - Tx[r] 
+      z *= S[q] - T[r] # with xmpz, this is marginally faster than combining * and %
       z %= n
 
     # Experiments that turned out to be slower than a simple "for" loop
     #z = reduce( (lambda x, y: x * y %n), map(lambda x:Sx[x[0]] - Tx[x[1]] , primeqr))
     #z = reduce( lambda x, y: x*(Sx[y[0]] - Tx[y[1]]) %n , [xmpz(1)]+primeqr )
-
-    #mapprq = map(lambda x: Sx[x[0]] - Tx[x[1]] , primeqr)
-    #z = reduce( (lambda x, y: x * y %n), mapprq)
-    
     if(timing):print("phase 2 main loop took",round(perf_counter()-start,3),f"sec for {len(primeqr)} primes");
 
-    start=perf_counter()
     g = gcd(z , n)
-    if(timing):print("phase 2 gcd took",round(perf_counter()-start,3),"sec");
     if g>1:
-      if (verbose): print("Phase 2 found factor",g,"for n=",n,"sigma=",sigma)
       return int(g)
 
     return int(n)        
@@ -405,10 +395,9 @@ def iterativeECM(factors) :
       p = factors[i]
       
       # B1 based on https://members.loria.fr/PZimmermann/records/ecm/params.html
-      # B2 set to run Stage 2 for similar length of time as Stage 1
       bits_in_factor = p.bit_length()//2
       B1 = int(math.exp(.075*bits_in_factor + 5.332))
-      B2=200*B1
+      B2=200*B1  # B2 set so Stage 2 runs for similar length of time as Stage 1
       
       if (verbose): print(f"factorECM, sieving up to B2={B2}")
       primes = list(sieve(B2))
@@ -451,19 +440,19 @@ def factorECM(n):
         return factors
       
     iterativeECM(factors)
-    factors.sort()
-    return factors
+    return sorted(factors)
 
 #--------------------------------------------------------------------------------------------------
 
 if __name__ =="__main__":
-    from functools import reduce
 
-    setTiming(0)
+    """
     n=1010101010101010101010101010101010101
     f = factorECM( n )
     print(n,f)
+    """
     
+    """
     setTiming(0)
     setVerbose(0)
     trials = [  randint(10**19,10**20)*randint(10**19,10**20)*randint(10**19,10**20)   for i in range(3) ]
@@ -473,13 +462,12 @@ if __name__ =="__main__":
         start= perf_counter()
         f = factorECM( n )
         end= perf_counter()
-        assert all(isPrime(x) for x in f)
-        assert(reduce((lambda x, y: x * y), f) == n)
+        assert all(isPrime(x) for x in f) and prod(f) == n
         print(f, round(end-start,1),"sec")
-
+    """
     # multiple rounds of the same size factors
-    setVerbose(False)
-    setTiming(False)
+    setVerbose(0)
+    setTiming(0)
     start0 = perf_counter()
     print("\nTime trial semiprimes:")
     for _ in range(5):
