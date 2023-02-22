@@ -13,7 +13,7 @@ import bisect
 from functools import reduce
 
 try:
-  raise Exception("test without GMP")
+  #raise Exception("test without GMP")
   from gmpy2 import mpz, invert, gcd, xmpz, gcdext
 except:
   from math import gcd
@@ -26,7 +26,7 @@ except:
 # The gmpy2 version is an order of magnitude faster.
 
 try:
-  raise Exception("test without GMP")
+  #raise Exception("test without GMP")
   import gmpy2
   SMALLPRIMELIM = 1_000_000
 
